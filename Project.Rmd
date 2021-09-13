@@ -1,0 +1,230 @@
+```{r}
+require(tidyverse)
+library(tidyverse)
+library(ggplot2)
+library(rsample)
+library(DescTools)
+library(caTools)
+library(caret)
+library(broom)
+library(yardstick)
+library(randomForest)
+library(cutpointr)
+library(zoo)
+library(scales)
+library(ggthemes)
+```
+#loading date
+```{r}
+house_price = read.csv('House_Price_time_series.csv')
+unemployment = read.csv('NC_unemployment.csv')
+weekly_wage = read.csv('Average_Weekly_Wage.csv')
+labor_force = read.csv('Labor_force_participation.csv')
+```
+#data cleaning
+```{r}
+library(data.table)
+house_price <- melt(setDT(house_price), id.vars = c("RegionID","SizeRank","RegionName","RegionType","StateName","State","Metro","StateCodeFIPS","MunicipalCodeFIPS"), variable.name = "date")
+
+house_price$date = as.Date(house_price$date, format="X%Y.%m.%d")
+house_price$Month_Yr <- format(as.Date(house_price$date), "%Y-%m")
+house_price = house_price %>% filter(State=='NC')
+```
+
+```{r}
+house_price_clean = subset(house_price, select=c("State", "value", "Month_Yr"))
+house = house_price_clean %>% drop_na(value)
+
+house = house %>% group_by(State, Month_Yr) %>% summarise_all("mean")
+
+house_price_clean2 = subset(house_price, select=c("State", "value", "Month_Yr", "RegionName"))
+house2 = house_price_clean2 %>% drop_na(value)
+
+house2 = house2 %>% group_by(State, Month_Yr, RegionName) %>% summarise_all("mean")
+```
+
+
+```{r}
+unemployment$Month_Yr = format(as.Date(unemployment$DATE), "%Y-%m")
+unemployment = subset(unemployment, select=c("NCURN", "Month_Yr"))
+umemployment = unemployment %>% group_by(Month_Yr) %>% summarise_all("mean")
+unemployment = unemployment %>% filter(Month_Yr >= '1996-01')
+
+
+
+
+weekly_wage$Month_Yr = format(as.Date(weekly_wage$DATE), "%Y-%m")
+weekly_wage = subset(weekly_wage, select=c("SMU37000000500000011", "Month_Yr"))
+colnames(weekly_wage)[1] = "Average_weekly_wage"
+weekly_wage = weekly_wage %>% group_by(Month_Yr) %>% summarise_all("mean")
+house_wage_comparison = house %>% filter(Month_Yr >= '2007-01')
+
+
+labor_force$Month_Yr = format(as.Date(labor_force$DATE), "%Y-%m")
+labor_force = subset(labor_force, select=c("LBSNSA37", "Month_Yr"))
+colnames(labor_force)[1] = "labor_force_rate"
+labor_force = labor_force %>% group_by(Month_Yr) %>% summarise_all("mean")
+labor_force = labor_force %>% filter(Month_Yr >= '1996-01')
+```
+
+#joining tables together
+```{r}
+unemployment_houseprice = inner_join(unemployment, house, by="Month_Yr")
+weeklywage_houseprice = inner_join(weekly_wage, house_wage_comparison, by="Month_Yr")
+laborforce_houseprice = inner_join(labor_force, house, by="Month_Yr")
+total_data = inner_join(unemployment_houseprice, weeklywage_houseprice, by="Month_Yr")
+total_data = inner_join(total_data, laborforce_houseprice, by="Month_Yr")
+```
+
+#cleaning the total data
+```{r}
+total_data = subset(total_data, select=c("Month_Yr","NCURN","Average_weekly_wage", "labor_force_rate","value","State.y"))
+colnames(total_data)[2] = "unemployment_rate"
+colnames(total_data)[5] = "average_home_value"
+colnames(total_data)[6] = "state"
+total_data$Month_Yr = as.Date(paste0(total_data$Month_Yr,'-01'),'%Y-%m-%d')
+```
+
+#start analysis visualization
+```{r}
+ggplot(total_data, aes(x=Month_Yr, y=average_home_value))+
+  geom_line(color='cadetblue')+
+  scale_x_date(labels = date_format("%m-%Y"), breaks="1 year")+
+  theme_light()+labs(title="Average Home Value Over Time",x="Month-Year", y="Average home Value $USD")+theme(axis.text.x=element_text(angle=60, hjust=1))
+```
+
+```{r}
+data = total_data %>% gather("key", "value", -c(Month_Yr,state, average_home_value))
+ggplot(data, aes(x=Month_Yr, y=value, color=key))+geom_line()+
+  scale_x_date(labels = date_format("%m-%Y"), breaks="1 year")+
+  theme_light()+
+  labs(x="Month-Year", y="Value")+theme(axis.text.x=element_text(angle=60, hjust=1))
+```
+
+```{r}
+
+ggplot(total_data, aes(x=Month_Yr))+
+  scale_x_date(labels = date_format("%m-%Y"), breaks="1 year")+
+  geom_line(aes(y=labor_force_rate, color="labor_force_rate"))+
+  geom_line(aes(y=unemployment_rate, color="unemployment_rate"))+
+  theme_light()+theme(axis.text.x=element_text(angle=60, hjust=1))+
+  labs(x="Month-Year", y="Value")
+  
+```
+```{r}
+ggplot(total_data, aes(x=Average_weekly_wage, y=average_home_value))+
+  scale_x_continuous(n.breaks=11)+
+  geom_point(color='cadetblue')+geom_smooth(method='lm')+theme_light()+
+  theme(axis.text.x=element_text(angle=60, hjust=1)) +
+  labs(title="Average Weekly Wage V. Average Home Value",x="Average Weekly Wage", y="Average Home Value")
+```
+```{r}
+ggplot(total_data, aes(x=unemployment_rate, y=average_home_value))+
+  scale_x_continuous(n.breaks=11)+
+  geom_point(color='cadetblue')+geom_smooth(method='lm')+theme_light()+
+  theme(axis.text.x=element_text(angle=60, hjust=1)) +
+  labs(title = "Unemployment Rate V. Average Home Value", x="Unemployment Rate %", y="Average Home Value")
+```
+
+
+```{r}
+ggplot(total_data, aes(x=labor_force_rate, y=average_home_value))+
+  scale_x_continuous(n.breaks=11)+
+  geom_point(color='cadetblue')+geom_smooth(method='lm')+theme_light()+
+  theme(axis.text.x=element_text(angle=60, hjust=1)) +
+  labs(title = "Labor Force Rate V. Average Home Value",x="Labor Force Rate %", y="Average Home Value")
+```
+#statistical analysis
+```{r}
+reg_fit1 = lm(average_home_value~Month_Yr+labor_force_rate+unemployment_rate+Average_weekly_wage, data=total_data)
+summary(reg_fit1)
+```
+```{r}
+reg_fit2 = lm(average_home_value~Month_Yr+labor_force_rate+unemployment_rate*Average_weekly_wage, data=total_data)
+summary(reg_fit2)
+```
+
+
+
+
+```{r}
+reg_fit3 = lm(average_home_value~Month_Yr+unemployment_rate*labor_force_rate+Average_weekly_wage, data=total_data)
+summary(reg_fit3)
+```
+
+
+```{r}
+reg_fit4 = lm(average_home_value~Month_Yr+unemployment_rate+labor_force_rate*Average_weekly_wage, data=total_data)
+summary(reg_fit4)
+```
+
+
+
+```{r}
+reg_fit_no_interaction = lm(average_home_value~Month_Yr+unemployment_rate+labor_force_rate+Average_weekly_wage, data=total_data)
+summary(reg_fit)
+```
+
+```{r}
+recession1 = total_data %>% filter(Month_Yr>'2007-12-01' & Month_Yr < '2009-06-01')
+```
+
+#recession analysis visualization1
+```{r}
+ggplot(recession1, aes(x=Month_Yr, y=average_home_value))+
+  geom_line(color='cadetblue')+
+  scale_x_date(labels = date_format("%m-%Y"), breaks="1 year")+
+  theme_light()+labs(title="Average Home Value Over Time 2008 Recession",x="Month-Year", y="Average home Value $USD")+theme(axis.text.x=element_text(angle=60, hjust=1))
+
+data = recession1 %>% gather("key", "value", -c(Month_Yr,state, average_home_value))
+ggplot(data, aes(x=Month_Yr, y=value, color=key))+geom_line()+
+  scale_x_date(labels = date_format("%m-%Y"), breaks="1 year")+
+  theme_light()+
+  labs(x="Month-Year", y="Value")+theme(axis.text.x=element_text(angle=60, hjust=1))
+
+ggplot(recession1, aes(x=Month_Yr))+
+  scale_x_date(labels = date_format("%m-%Y"), breaks="1 year")+
+  geom_line(aes(y=labor_force_rate, color="labor_force_rate"))+
+  geom_line(aes(y=unemployment_rate, color="unemployment_rate"))+
+  theme_light()+theme(axis.text.x=element_text(angle=60, hjust=1))+
+  labs(x="Month-Year", y="Value")
+```
+
+#recession analysis visualization2
+```{r}
+ggplot(recession1, aes(x=Average_weekly_wage, y=average_home_value))+
+  scale_x_continuous(n.breaks=11)+
+  geom_point(color='cadetblue')+geom_smooth(method='lm')+theme_light()+
+  theme(axis.text.x=element_text(angle=60, hjust=1)) +
+  labs(title="Average Weekly Wage V. Average Home Value 2008 Recession",x="Average Weekly Wage", y="Average Home Value")
+
+ggplot(recession1, aes(x=unemployment_rate, y=average_home_value))+
+  scale_x_continuous(n.breaks=11)+
+  geom_point(color='cadetblue')+geom_smooth(method='lm')+theme_light()+
+  theme(axis.text.x=element_text(angle=60, hjust=1)) +
+  labs(title = "Unemployment Rate V. Average Home Value 2008 Recession", x="Unemployment Rate %", y="Average Home Value")
+
+ggplot(recession1, aes(x=labor_force_rate, y=average_home_value))+
+  scale_x_continuous(n.breaks=11)+
+  geom_point(color='cadetblue')+geom_smooth(method='lm')+theme_light()+
+  theme(axis.text.x=element_text(angle=60, hjust=1)) +
+  labs(title = "Labor Force Rate V. Average Home Value 2008 Recession",x="Labor Force Rate %", y="Average Home Value")
+```
+#Regression analysis
+```{r}
+reg_fit1 = lm(average_home_value~0+Month_Yr+labor_force_rate+unemployment_rate+Average_weekly_wage, data=recession1)
+summary(reg_fit1)
+
+reg_fit2 = lm(average_home_value~Month_Yr+labor_force_rate+unemployment_rate*Average_weekly_wage, data=recession1)
+summary(reg_fit2)
+
+reg_fit3 = lm(average_home_value~Month_Yr+unemployment_rate*labor_force_rate+Average_weekly_wage, data=recession1)
+summary(reg_fit3)
+
+reg_fit4 = lm(average_home_value~Month_Yr+unemployment_rate+labor_force_rate*Average_weekly_wage, data=recession1)
+summary(reg_fit4)
+
+reg_fit_no_interaction = lm(average_home_value~Month_Yr+unemployment_rate+labor_force_rate+Average_weekly_wage, data=recession1)
+summary(reg_fit_no_interaction)
+```
+
